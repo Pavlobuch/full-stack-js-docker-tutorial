@@ -1,4 +1,4 @@
-name: Deploy (via Bastion -> Private EC2)
+name: Deploy (OIDC -> AWS SSM -> Private EC2)
 
 on:
   push:
@@ -9,78 +9,63 @@ concurrency:
   group: deploy-main
   cancel-in-progress: true
 
+permissions:
+  id-token: write
+  contents: read
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Setup SSH
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
-          BASTION_HOST: ${{ secrets.BASTION_HOST }}
-          BASTION_USER: ${{ secrets.BASTION_USER }}
-          APP_HOST: ${{ secrets.APP_HOST }}
-          APP_USER: ${{ secrets.APP_USER }}
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Resolve App InstanceId by tag Name
+        id: find_app
         run: |
           set -euo pipefail
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
+          INSTANCE_ID="$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${{ vars.PROJECT_NAME }}-app" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text)"
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "ERROR: Could not find running instance with tag Name=${{ vars.PROJECT_NAME }}-app"
+            exit 1
+          fi
+          echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
+          echo "App InstanceId: $INSTANCE_ID"
 
-          # --- Validate required secrets (fast fail with readable error) ---
-          : "${BASTION_HOST:?BASTION_HOST secret is missing/empty}"
-          : "${BASTION_USER:?BASTION_USER secret is missing/empty}"
-          : "${APP_HOST:?APP_HOST secret is missing/empty}"
-          : "${APP_USER:?APP_USER secret is missing/empty}"
-
-          eval "$(ssh-agent -s)"
-          echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
-
-          # --- Check TCP reachability to bastion:22 (gives a clear reason) ---
-          timeout 5 bash -c "cat < /dev/null > /dev/tcp/${BASTION_HOST}/22" \
-            && echo "Bastion port 22 reachable" \
-            || { echo "ERROR: Bastion port 22 NOT reachable (likely Security Group blocks GitHub runner IPs)"; exit 1; }
-
-          # --- Pin bastion host key ---
-          ssh-keyscan -T 5 -H "$BASTION_HOST" >> ~/.ssh/known_hosts
-
-          cat > ~/.ssh/config <<EOF
-          Host bastion
-            HostName $BASTION_HOST
-            User $BASTION_USER
-            IdentitiesOnly yes
-            StrictHostKeyChecking yes
-
-          Host app
-            HostName $APP_HOST
-            User $APP_USER
-            IdentitiesOnly yes
-            ProxyJump bastion
-            StrictHostKeyChecking no
-            UserKnownHostsFile /dev/null
-          EOF
-          chmod 600 ~/.ssh/config
-
-      - name: Deploy on App EC2 (git reset + docker compose up)
-        env:
-          APP_DIR: ${{ secrets.APP_DIR }}
+      - name: Deploy via SSM (git reset + docker compose up)
         run: |
           set -euo pipefail
+          IID="${{ steps.find_app.outputs.instance_id }}"
 
-          ssh app "APP_DIR='${APP_DIR}' bash -seu" <<'REMOTE'
-          set -euo pipefail
+          CMD_ID="$(aws ssm send-command \
+            --instance-ids "$IID" \
+            --document-name "AWS-RunShellScript" \
+            --comment "Deploy fullstack" \
+            --parameters 'commands=[
+              "set -euo pipefail",
+              "cd /opt/apps/fullstack",
+              "git fetch --prune origin",
+              "git reset --hard origin/main",
+              "cd /opt/apps/fullstack/finished",
+              "docker compose up -d --build",
+              "docker compose ps"
+            ]' \
+            --query "Command.CommandId" --output text)"
 
-          APP_DIR="${APP_DIR:-/opt/apps/fullstack}"
-          cd "$APP_DIR"
+          echo "SSM CommandId: $CMD_ID"
+          aws ssm wait command-executed --command-id "$CMD_ID" --instance-id "$IID"
 
-          # Deterministic update
-          git fetch --prune origin
-          git reset --hard origin/main
-
-          # Build & run on EC2 (no registry)
-          test -d "$APP_DIR/finished" || { echo "Missing dir: $APP_DIR/finished"; exit 1; }
-          cd "$APP_DIR/finished"
-          docker compose up -d --build
-          docker compose ps
-          REMOTE
+          echo "----- STDOUT -----"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$IID" --query "StandardOutputContent" --output text
+          echo "----- STDERR -----"
+          aws ssm get-command-invocation --command-id "$CMD_ID" --instance-id "$IID" --query "StandardErrorContent" --output text
 
       - name: Health-check via ALB
         env:
