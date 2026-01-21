@@ -59,6 +59,17 @@
         name: docker
         state: present
 
+    - name: Ensure SSM Agent installed
+      ansible.builtin.package:
+        name: amazon-ssm-agent
+        state: present
+
+    - name: Enable and start SSM Agent
+      ansible.builtin.service:
+        name: amazon-ssm-agent
+        state: started
+        enabled: true
+
     - name: CI bootstrap (deploy user + authorized_keys)
       ansible.builtin.import_role:
         name: ci_bootstrap
@@ -214,14 +225,23 @@
       ansible.builtin.debug:
         var: buildx_ver.stdout
 
+    - name: Check if .env exists
+      ansible.builtin.stat:
+        path: "{{ env_file_path }}"
+      register: env_stat
+
+
     # ---- Write .env and bring stack up ----
-    - name: Write .env file
+    - name: Write .env file (only if missing)
       ansible.builtin.copy:
         dest: "{{ env_file_path }}"
         content: "{{ env_file_content }}"
         owner: ec2-user
         group: ec2-user
         mode: "0600"
+        force: false
+      when: not env_stat.stat.exists
+
 
     - name: Docker compose up (build on EC2)
       ansible.builtin.command: docker compose up -d --build

@@ -35,11 +35,11 @@ resource "aws_subnet" "public_a" {
 # ----------------------------
 resource "aws_subnet" "public_b" {
   vpc_id                  = aws_vpc.this.id
-  cidr_block              = var.public_subnet_b_cidr         # NEW var
-  availability_zone       = var.az_b                         # NEW var
+  cidr_block              = var.public_subnet_b_cidr # NEW var
+  availability_zone       = var.az_b                 # NEW var
   map_public_ip_on_launch = true
 
-  tags = { Name = "${var.project}-public-b" }                # NEW tag name
+  tags = { Name = "${var.project}-public-b" } # NEW tag name
 }
 
 
