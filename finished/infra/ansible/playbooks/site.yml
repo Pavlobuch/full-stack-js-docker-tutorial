@@ -1,0 +1,256 @@
+- name: Provision and deploy app on private EC2 (docker compose)
+  hosts: app
+  become: true
+
+  vars_files:
+    - group_vars/all/ci.yml
+
+  vars:
+    repo_url: "https://github.com/Pavlobuch/full-stack-js-docker-tutorial.git"
+    repo_dest: "/opt/apps/fullstack"
+    compose_dir: "/opt/apps/fullstack/finished"
+    compose_file: "/opt/apps/fullstack/finished/docker-compose.yml"
+    docker_cli_plugins_dir_local: "/usr/local/lib/docker/cli-plugins"
+    docker_cli_plugins_dir_exec: "/usr/libexec/docker/cli-plugins"
+    docker_buildx_local: "/usr/local/lib/docker/cli-plugins/docker-buildx"
+    docker_buildx_exec: "/usr/libexec/docker/cli-plugins/docker-buildx"
+
+    # .env content for compose
+    env_file_path: "/opt/apps/fullstack/finished/.env"
+    env_file_content: |
+      MYSQL_DATABASE=blog
+      MYSQL_USER=bloguser
+      MYSQL_PASSWORD=blogpass
+      MYSQL_ROOT_PASSWORD=rootpass
+      MYSQL_HOST=db
+      API_PORT=5050
+      CLIENT_PORT=3000
+
+    # Docker CLI plugins path
+    docker_cli_plugins_dir: "/usr/local/lib/docker/cli-plugins"
+    docker_compose_plugin_path: "/usr/local/lib/docker/cli-plugins/docker-compose"
+    docker_buildx_plugin_path: "/usr/local/lib/docker/cli-plugins/docker-buildx"
+
+  tasks:
+    - name: Update packages
+      ansible.builtin.command: dnf -y update
+      changed_when: false
+
+    - name: Install base packages (git + ca-certs)
+      ansible.builtin.package:
+        name:
+          - git
+          - ca-certificates
+        state: present
+
+    - name: Install Docker (if not present)
+      ansible.builtin.package:
+        name: docker
+        state: present
+
+    - name: Enable and start Docker
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Ensure docker group exists
+      ansible.builtin.group:
+        name: docker
+        state: present
+
+    - name: CI bootstrap (deploy user + authorized_keys)
+      ansible.builtin.import_role:
+        name: ci_bootstrap
+
+    - name: Add ec2-user to docker group
+      ansible.builtin.user:
+        name: ec2-user
+        groups: docker
+        append: true
+
+    - name: Ensure app base directory exists
+      ansible.builtin.file:
+        path: /opt/apps
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        mode: "0755"
+
+    - name: Ensure repo directory ownership is ec2-user
+      ansible.builtin.file:
+        path: "{{ repo_dest }}"
+        state: directory
+        owner: ec2-user
+        group: ec2-user
+        recurse: true
+
+    - name: Mark repo path as safe for git (avoid dubious ownership)
+      ansible.builtin.command: git config --global --add safe.directory "{{ repo_dest }}"
+      become: false
+
+    - name: Clone application repository (as ec2-user)
+      ansible.builtin.git:
+        repo: "{{ repo_url }}"
+        dest: "{{ repo_dest }}"
+        version: main
+        force: true
+      become: false
+
+    - name: Ensure docker CLI plugins dir exists
+      ansible.builtin.file:
+        path: "{{ docker_cli_plugins_dir }}"
+        state: directory
+        mode: "0755"
+
+    # ---- Install Docker Compose plugin (no wget/curl required) ----
+    - name: Download Docker Compose plugin (official binary)
+      ansible.builtin.get_url:
+        url: "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64"
+        dest: "{{ docker_compose_plugin_path }}"
+        mode: "0755"
+
+    - name: Verify docker compose works
+      ansible.builtin.command: docker compose version
+      register: compose_ver
+      changed_when: false
+
+    - name: Print docker compose version
+      ansible.builtin.debug:
+        var: compose_ver.stdout
+
+    # ---- Ensure compose file exists ----
+    - name: Check docker-compose.yml exists
+      ansible.builtin.stat:
+        path: "{{ compose_file }}"
+      register: compose_stat
+
+    - name: Fail if docker-compose.yml missing
+      ansible.builtin.fail:
+        msg: "docker-compose.yml not found at {{ compose_file }}"
+      when: not compose_stat.stat.exists
+
+    # ---- Install Buildx via GitHub API (correct asset URL) ----
+    - name: Ensure docker cli plugins dirs exist (both common locations)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /usr/local/lib/docker/cli-plugins
+        - /usr/libexec/docker/cli-plugins
+
+    - name: Get latest buildx release info from GitHub API
+      ansible.builtin.uri:
+        url: "https://api.github.com/repos/docker/buildx/releases/latest"
+        return_content: true
+      register: buildx_release
+
+    - name: Pick linux-amd64 buildx asset URL
+      ansible.builtin.set_fact:
+        buildx_url: >-
+          {{
+            (buildx_release.json.assets
+              | selectattr('name', 'search', 'linux-amd64$')
+              | map(attribute='browser_download_url')
+              | list
+              | first)
+          }}
+
+    - name: Fail if buildx_url not found
+      ansible.builtin.fail:
+        msg: "Could not find linux-amd64 buildx asset in latest release"
+      when: buildx_url is not defined or buildx_url | length == 0
+
+    - name: Remove old buildx plugin if exists (avoid empty file)
+      ansible.builtin.file:
+        path: /usr/local/lib/docker/cli-plugins/docker-buildx
+        state: absent
+
+    - name: Install wget
+      ansible.builtin.package:
+        name: wget
+        state: present
+
+    - name: Download buildx with wget (show errors)
+      ansible.builtin.command: >
+        wget -S -O /usr/local/lib/docker/cli-plugins/docker-buildx "{{ buildx_url }}"
+      register: wget_buildx
+
+    - name: Make buildx executable
+      ansible.builtin.file:
+        path: /usr/local/lib/docker/cli-plugins/docker-buildx
+        mode: "0755"
+
+    - name: Check buildx file size
+      ansible.builtin.stat:
+        path: /usr/local/lib/docker/cli-plugins/docker-buildx
+      register: buildx_stat
+
+    - name: Fail if buildx file is empty
+      ansible.builtin.fail:
+        msg: "Downloaded buildx is empty (0 bytes). URL={{ buildx_url }}"
+      when: buildx_stat.stat.size | int == 0
+
+
+    - name: Copy Buildx plugin to /usr/libexec (alternate plugin path)
+      ansible.builtin.copy:
+        src: /usr/local/lib/docker/cli-plugins/docker-buildx
+        dest: /usr/libexec/docker/cli-plugins/docker-buildx
+        remote_src: true
+        mode: "0755"
+
+    - name: Restart docker to pick up CLI plugins (safe)
+      ansible.builtin.service:
+        name: docker
+        state: restarted
+
+    - name: Verify buildx
+      ansible.builtin.command: docker buildx version
+      register: buildx_ver
+      changed_when: false
+
+    - name: Print buildx version
+      ansible.builtin.debug:
+        var: buildx_ver.stdout
+
+    # ---- Write .env and bring stack up ----
+    - name: Write .env file
+      ansible.builtin.copy:
+        dest: "{{ env_file_path }}"
+        content: "{{ env_file_content }}"
+        owner: ec2-user
+        group: ec2-user
+        mode: "0600"
+
+    - name: Docker compose up (build on EC2)
+      ansible.builtin.command: docker compose up -d --build
+      args:
+        chdir: "{{ compose_dir }}"
+      register: compose_up
+      changed_when: false
+      failed_when: compose_up.rc != 0
+
+    - name: Print docker compose stderr (if any)
+      ansible.builtin.debug:
+        var: compose_up.stderr_lines
+
+    - name: Docker compose ps
+      ansible.builtin.command: docker compose ps
+      args:
+        chdir: "{{ compose_dir }}"
+      register: compose_ps
+      changed_when: false
+
+    - name: Print docker compose ps
+      ansible.builtin.debug:
+        var: compose_ps.stdout_lines
+
+    - name: Show running containers
+      ansible.builtin.command: docker ps
+      register: docker_ps
+      changed_when: false
+
+    - name: Print docker ps
+      ansible.builtin.debug:
+        var: docker_ps.stdout_lines

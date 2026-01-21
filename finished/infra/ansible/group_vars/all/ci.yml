@@ -1,0 +1,5 @@
+ci_deploy_user: deploy
+
+# Public key that GitHub Actions will use to SSH in.
+# Paste the content of ~/.ssh/gha_deploy.pub here (single line).
+ci_github_actions_pubkey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM0sBuOWIBAYRK58rCpEiv287wRbeRyfQIhBPMG2zxY1 gha-deploy"

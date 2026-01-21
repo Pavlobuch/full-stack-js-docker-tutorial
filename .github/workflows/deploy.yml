@@ -1,0 +1,81 @@
+name: Deploy (via Bastion -> Private EC2)
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup SSH
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          BASTION_HOST: ${{ secrets.BASTION_HOST }}
+          BASTION_USER: ${{ secrets.BASTION_USER }}
+          APP_HOST: ${{ secrets.APP_HOST }}
+          APP_USER: ${{ secrets.APP_USER }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
+          eval "$(ssh-agent -s)"
+          echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
+
+          # Pin bastion host key (better than disabling checks)
+          ssh-keyscan -H "$BASTION_HOST" >> ~/.ssh/known_hosts
+
+          # SSH config: app goes through bastion
+          cat > ~/.ssh/config <<EOF
+          Host bastion
+            HostName $BASTION_HOST
+            User $BASTION_USER
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+
+          Host app
+            HostName $APP_HOST
+            User $APP_USER
+            IdentitiesOnly yes
+            ProxyJump bastion
+            StrictHostKeyChecking no
+            UserKnownHostsFile /dev/null
+          EOF
+          chmod 600 ~/.ssh/config
+
+      - name: Deploy on App EC2 (git reset + docker compose up)
+        env:
+          APP_DIR: ${{ secrets.APP_DIR }}
+        run: |
+          set -euo pipefail
+
+          ssh app "APP_DIR='${APP_DIR}' bash -seu" <<'REMOTE'
+          set -euo pipefail
+
+          APP_DIR="${APP_DIR:-/opt/apps/fullstack}"
+          cd "$APP_DIR/"
+
+          # Deterministic update
+          git fetch --prune origin
+          git reset --hard origin/main
+
+          # Build & run on EC2 (no registry)
+          test -d "$APP_DIR/finished" || { echo "Missing dir: $APP_DIR/finished"; exit 1; }
+          cd "$APP_DIR/finished"
+          docker compose up -d --build
+
+          docker compose ps
+          REMOTE
+
+      - name: Health-check via ALB
+        env:
+          ALB_URL: ${{ secrets.ALB_URL }}
+        run: |
+          set -euo pipefail
+          curl -fsS -I "$ALB_URL" | head -n 1

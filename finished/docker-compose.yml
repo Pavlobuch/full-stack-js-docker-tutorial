@@ -1,0 +1,92 @@
+services:
+  db:
+    image: mysql:8.0
+    restart: always
+    cap_add:
+      - SYS_NICE
+    volumes:
+      - mysql_data:/var/lib/mysql
+      - ./api-server/db-setup.sql:/docker-entrypoint-initdb.d/setup.sql:ro
+    ports:
+      - "9906:3306"
+    environment:
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$MYSQL_ROOT_PASSWORD"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: ./api-server
+      target: dev
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./api-server:/src
+      - /src/node_modules
+    command: npm run start:dev
+    environment:
+      NODE_ENV: development
+      PORT: ${API_PORT}
+      MYSQL_HOST: db
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    expose:
+      - "${API_PORT}"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('net').connect(process.env.PORT,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ui:
+    stdin_open: true
+    environment:
+      CHOKIDAR_USEPOLLING: "true"
+      PORT: ${CLIENT_PORT}
+    build:
+      context: ./blog-ui
+    volumes:
+      - ./blog-ui:/src
+      - /src/node_modules
+    expose:
+      - "${CLIENT_PORT}"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"require('net').connect(process.env.PORT,'127.0.0.1').on('connect',()=>process.exit(0)).on('error',()=>process.exit(1))\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  nginx:
+    restart: always
+    build:
+      dockerfile: Dockerfile
+      context: ./nginx
+    depends_on:
+      api:
+        condition: service_healthy
+      ui:
+        condition: service_healthy
+    ports:
+      - "8008:80"
+
+  adminer:
+    image: adminer:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ADMINER_DEFAULT_SERVER: db
+
+volumes:
+  mysql_data:

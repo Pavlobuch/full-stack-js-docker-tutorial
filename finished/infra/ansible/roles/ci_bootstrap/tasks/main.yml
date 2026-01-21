@@ -1,0 +1,35 @@
+- name: Ensure docker group exists
+  ansible.builtin.group:
+    name: docker
+    state: present
+  tags: [ci_bootstrap]
+  
+- name: Ensure CI deploy user exists
+  ansible.builtin.user:
+    name: "{{ ci_deploy_user }}"
+    shell: /bin/bash
+    create_home: true
+  tags: [ci_bootstrap]
+
+- name: Ensure deploy user is in docker group
+  ansible.builtin.user:
+    name: "{{ ci_deploy_user }}"
+    groups: docker
+    append: true
+  tags: [ci_bootstrap]
+
+- name: Ensure .ssh directory exists
+  ansible.builtin.file:
+    path: "/home/{{ ci_deploy_user }}/.ssh"
+    state: directory
+    owner: "{{ ci_deploy_user }}"
+    group: "{{ ci_deploy_user }}"
+    mode: "0700"
+  tags: [ci_bootstrap]
+
+- name: Add GitHub Actions public key to authorized_keys
+  ansible.posix.authorized_key:
+    user: "{{ ci_deploy_user }}"
+    state: present
+    key: "{{ ci_github_actions_pubkey }}"
+  tags: [ci_bootstrap]
