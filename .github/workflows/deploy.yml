@@ -28,6 +28,7 @@ jobs:
         id: find_app
         env:
           PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
+          REPO_URL: ${{ secrets.REPO_URL }}
         run: |
           set -euo pipefail
 
@@ -70,13 +71,24 @@ jobs:
               "whoami",
               "pwd",
               "export HOME=/root",
-              "git config --global --add safe.directory /opt/apps/fullstack",
+              "REPO_URL=\"'"${REPO_URL}"'\"",
+              "APP_ROOT=/opt/apps",
+              "APP_DIR=/opt/apps/fullstack",
+
+              "mkdir -p \"$APP_ROOT\"",
+
+              "if [ ! -d \"$APP_DIR/.git\" ]; then echo \"Repo missing -> cloning\"; rm -rf \"$APP_DIR\"; git clone \"$REPO_URL\" \"$APP_DIR\"; fi",
+
+              "git config --global --add safe.directory \"$APP_DIR\"",
+              "cd \"$APP_DIR\"",
               "git fetch --prune origin",
               "git reset --hard origin/main",
-              "cd /opt/apps/fullstack/finished",
+
+              "cd \"$APP_DIR/finished\"",
               "docker compose up -d --build",
               "docker compose ps"
-            ]' \
+            ]' /
+
             --query "Command.CommandId" --output text)"
 
           echo "SSM CommandId: $CMD_ID"
