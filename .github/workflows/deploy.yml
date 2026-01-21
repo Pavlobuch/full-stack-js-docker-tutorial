@@ -26,18 +26,35 @@ jobs:
 
       - name: Resolve App InstanceId by tag Name
         id: find_app
+        env:
+          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
         run: |
           set -euo pipefail
-          INSTANCE_ID="$(aws ec2 describe-instances \
-            --filters "Name=tag:Name,Values=${{ vars.PROJECT_NAME }}-app" "Name=instance-state-name,Values=running" \
-            --query "Reservations[0].Instances[0].InstanceId" \
-            --output text)"
-          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
-            echo "ERROR: Could not find running instance with tag Name=${{ vars.PROJECT_NAME }}-app"
+
+          echo "DEBUG: PROJECT_NAME='${PROJECT_NAME}'"
+          if [ -z "${PROJECT_NAME}" ]; then
+            echo "ERROR: PROJECT_NAME is empty. Create repo variable PROJECT_NAME (Settings -> Actions -> Variables)."
             exit 1
           fi
+
+          INSTANCE_ID="$(aws ec2 describe-instances \
+            --filters "Name=tag:Name,Values=${PROJECT_NAME}-app" "Name=instance-state-name,Values=running" \
+            --query "Reservations[0].Instances[0].InstanceId" \
+            --output text)"
+
+          if [ -z "$INSTANCE_ID" ] || [ "$INSTANCE_ID" = "None" ]; then
+            echo "ERROR: Could not find running instance with tag Name=${PROJECT_NAME}-app"
+            echo "INFO: Listing running Name tags for debugging:"
+            aws ec2 describe-instances \
+              --filters "Name=instance-state-name,Values=running" \
+              --query "Reservations[].Instances[].Tags[?Key=='Name'].Value" \
+              --output text
+            exit 1
+          fi
+
           echo "instance_id=$INSTANCE_ID" >> "$GITHUB_OUTPUT"
           echo "App InstanceId: $INSTANCE_ID"
+
 
       - name: Deploy via SSM (git reset + docker compose up)
         run: |
