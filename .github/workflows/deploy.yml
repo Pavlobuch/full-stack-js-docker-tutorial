@@ -58,6 +58,8 @@ jobs:
 
 
       - name: Deploy via SSM (git reset + docker compose up)
+        env:
+          REPO_URL: ${{ secrets.REPO_URL }}
         run: |
           set -euo pipefail
           IID="${{ steps.find_app.outputs.instance_id }}"
