@@ -70,6 +70,7 @@ jobs:
               "whoami",
               "pwd",
               "cd /opt/apps/fullstack",
+              "git config --global --add safe.directory /opt/apps/fullstack",
               "git fetch --prune origin",
               "git reset --hard origin/main",
               "cd /opt/apps/fullstack/finished",
