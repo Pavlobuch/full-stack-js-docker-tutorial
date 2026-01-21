@@ -126,9 +126,24 @@ jobs:
             exit 1
           fi
 
-      - name: Health-check via ALB
+      - name: Health-check via ALB (retries)
         env:
           ALB_URL: ${{ secrets.ALB_URL }}
         run: |
           set -euo pipefail
-          curl -fsS -I "$ALB_URL" | head -n 1
+          : "${ALB_URL:?ALB_URL secret is missing/empty}"
+
+          echo "Checking: $ALB_URL"
+          for i in {1..20}; do
+            code="$(curl -s -o /dev/null -w "%{http_code}" "$ALB_URL" || true)"
+            echo "Attempt $i: HTTP $code"
+            if [ "$code" = "200" ]; then
+              echo "OK"
+              exit 0
+            fi
+            sleep 10
+          done
+
+          echo "ERROR: ALB did not return 200 after retries"
+          curl -v "$ALB_URL" || true
+          exit 1
