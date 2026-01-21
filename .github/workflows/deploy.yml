@@ -27,7 +27,7 @@ jobs:
       - name: Resolve App InstanceId by tag Name
         id: find_app
         env:
-          PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
         run: |
           set -euo pipefail
 
