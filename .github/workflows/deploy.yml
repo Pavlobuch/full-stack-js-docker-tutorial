@@ -25,13 +25,23 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
+          # --- Validate required secrets (fast fail with readable error) ---
+          : "${BASTION_HOST:?BASTION_HOST secret is missing/empty}"
+          : "${BASTION_USER:?BASTION_USER secret is missing/empty}"
+          : "${APP_HOST:?APP_HOST secret is missing/empty}"
+          : "${APP_USER:?APP_USER secret is missing/empty}"
+
           eval "$(ssh-agent -s)"
           echo "$SSH_PRIVATE_KEY" | tr -d '\r' | ssh-add -
 
-          # Pin bastion host key (better than disabling checks)
-          ssh-keyscan -H "$BASTION_HOST" >> ~/.ssh/known_hosts
+          # --- Check TCP reachability to bastion:22 (gives a clear reason) ---
+          timeout 5 bash -c "cat < /dev/null > /dev/tcp/${BASTION_HOST}/22" \
+            && echo "Bastion port 22 reachable" \
+            || { echo "ERROR: Bastion port 22 NOT reachable (likely Security Group blocks GitHub runner IPs)"; exit 1; }
 
-          # SSH config: app goes through bastion
+          # --- Pin bastion host key ---
+          ssh-keyscan -T 5 -H "$BASTION_HOST" >> ~/.ssh/known_hosts
+
           cat > ~/.ssh/config <<EOF
           Host bastion
             HostName $BASTION_HOST
@@ -59,7 +69,7 @@ jobs:
           set -euo pipefail
 
           APP_DIR="${APP_DIR:-/opt/apps/fullstack}"
-          cd "$APP_DIR/"
+          cd "$APP_DIR"
 
           # Deterministic update
           git fetch --prune origin
@@ -69,7 +79,6 @@ jobs:
           test -d "$APP_DIR/finished" || { echo "Missing dir: $APP_DIR/finished"; exit 1; }
           cd "$APP_DIR/finished"
           docker compose up -d --build
-
           docker compose ps
           REMOTE
 
