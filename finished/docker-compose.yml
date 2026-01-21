@@ -75,7 +75,7 @@ services:
       ui:
         condition: service_healthy
     ports:
-      - "8008:80"
+      - "80:80"
 
   adminer:
     image: adminer:latest
