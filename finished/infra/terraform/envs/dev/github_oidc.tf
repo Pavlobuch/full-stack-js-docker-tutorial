@@ -23,6 +23,18 @@ resource "aws_iam_policy" "github_ssm_deploy" {
           "ssm:ListCommandInvocations"
         ],
         Resource = "*"
+      },
+
+      # ✅ ADD THIS BLOCK
+      {
+        Effect = "Allow",
+        Action = [
+          "elasticloadbalancing:DescribeLoadBalancers",
+          "elasticloadbalancing:DescribeTags",
+          "elasticloadbalancing:DescribeTargetGroups",
+          "elasticloadbalancing:DescribeTargetHealth"
+        ],
+        Resource = "*"
       }
     ]
   })
