@@ -126,15 +126,56 @@ jobs:
             exit 1
           fi
 
-      - name: Health-check via ALB (retries)
+      - name: Resolve ALB URL by name/tag
+        id: find_alb
         env:
-          ALB_URL: ${{ secrets.ALB_URL }}
+          PROJECT_NAME: ${{ secrets.PROJECT_NAME }}
         run: |
           set -euo pipefail
-          : "${ALB_URL:?ALB_URL secret is missing/empty}"
+          : "${PROJECT_NAME:?PROJECT_NAME secret is missing/empty}"
+
+          # ALB name in your infra is typically: ${PROJECT_NAME}-alb or similar.
+          # Your real one is "cheap-fullstack-alb", so this matches that pattern.
+          ALB_ARN="$(aws elbv2 describe-load-balancers \
+            --query "LoadBalancers[?contains(LoadBalancerName, \`${PROJECT_NAME}-alb\`)].LoadBalancerArn | [0]" \
+            --output text)"
+
+          # Fallback: if your ALB name is exactly ${PROJECT_NAME}-alb not found, try contains(PROJECT_NAME)
+          if [ -z "$ALB_ARN" ] || [ "$ALB_ARN" = "None" ]; then
+            ALB_ARN="$(aws elbv2 describe-load-balancers \
+              --query "LoadBalancers[?contains(LoadBalancerName, \`${PROJECT_NAME}\`)].LoadBalancerArn | [0]" \
+              --output text)"
+          fi
+
+          if [ -z "$ALB_ARN" ] || [ "$ALB_ARN" = "None" ]; then
+            echo "ERROR: Could not find ALB by name containing '${PROJECT_NAME}'"
+            aws elbv2 describe-load-balancers --query "LoadBalancers[].LoadBalancerName" --output text
+            exit 1
+          fi
+
+          ALB_DNS="$(aws elbv2 describe-load-balancers \
+            --load-balancer-arns "$ALB_ARN" \
+            --query "LoadBalancers[0].DNSName" \
+            --output text)"
+
+          if [ -z "$ALB_DNS" ] || [ "$ALB_DNS" = "None" ]; then
+            echo "ERROR: Could not resolve ALB DNSName"
+            exit 1
+          fi
+
+          ALB_URL="http://${ALB_DNS}/"
+          echo "alb_url=$ALB_URL" >> "$GITHUB_OUTPUT"
+          echo "Resolved ALB_URL: $ALB_URL"
+
+      - name: Health-check via ALB (retries)
+        env:
+          ALB_URL: ${{ steps.find_alb.outputs.alb_url }}
+        run: |
+          set -euo pipefail
+          : "${ALB_URL:?ALB_URL is missing/empty}"
 
           echo "Checking: $ALB_URL"
-          for i in {1..20}; do
+          for i in {1..5}; do
             code="$(curl -s -o /dev/null -w "%{http_code}" "$ALB_URL" || true)"
             echo "Attempt $i: HTTP $code"
             if [ "$code" = "200" ]; then
@@ -147,3 +188,4 @@ jobs:
           echo "ERROR: ALB did not return 200 after retries"
           curl -v "$ALB_URL" || true
           exit 1
+
