@@ -1,0 +1,75 @@
+- name: Check if k3s is installed
+  ansible.builtin.command: k3s --version
+  register: k3s_ver
+  changed_when: false
+  failed_when: false
+
+- name: Check if curl exists
+  ansible.builtin.command: curl --version
+  register: curl_check
+  changed_when: false
+  failed_when: false
+
+- name: Check if wget exists
+  ansible.builtin.command: wget --version
+  register: wget_check
+  changed_when: false
+  failed_when: false
+
+- name: Install wget only if neither curl nor wget is present
+  ansible.builtin.package:
+    name: wget
+    state: present
+  when: curl_check.rc != 0 and wget_check.rc != 0
+
+
+- name: Install K3s (single-node) if missing (disable traefik + servicelb)
+  ansible.builtin.shell: |
+    set -euo pipefail
+    export INSTALL_K3S_EXEC="server --disable traefik --disable servicelb"
+    if command -v curl >/dev/null 2>&1; then
+      curl -sfL https://get.k3s.io | sh -
+    else
+      wget -qO- https://get.k3s.io | sh -
+    fi
+  args:
+    executable: /bin/bash
+  when: k3s_ver.rc != 0
+
+- name: Configure K3s to disable traefik + servicelb (idempotent)
+  ansible.builtin.copy:
+    dest: /etc/rancher/k3s/config.yaml
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      disable:
+        - traefik
+        - servicelb
+
+- name: Restart k3s to apply config changes
+  ansible.builtin.service:
+    name: k3s
+    state: restarted
+
+
+- name: Ensure k3s service is enabled and running
+  ansible.builtin.service:
+    name: k3s
+    state: started
+    enabled: true
+
+- name: Ensure kubeconfig is readable
+  ansible.builtin.file:
+    path: /etc/rancher/k3s/k3s.yaml
+    mode: "0644"
+  changed_when: false
+
+- name: Verify Kubernetes node is Ready
+  ansible.builtin.command: kubectl get nodes -o wide
+  register: k_nodes
+  changed_when: false
+
+- name: Print Kubernetes nodes
+  ansible.builtin.debug:
+    var: k_nodes.stdout_lines

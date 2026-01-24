@@ -1,0 +1,14 @@
+app_root: /opt/apps/fullstack
+compose_dir: /opt/apps/fullstack/finished
+repo_url: "https://github.com/<YOUR_GITHUB_USERNAME>/full-stack-js-docker-tutorial.git"
+repo_branch: "main"
+
+env_file_content: |
+  MYSQL_DATABASE=blog
+  MYSQL_USER=bloguser
+  MYSQL_PASSWORD=blogpass
+  MYSQL_ROOT_PASSWORD=rootpass
+  MYSQL_HOST=db
+  API_PORT=5050
+  CLIENT_PORT=3000
+
