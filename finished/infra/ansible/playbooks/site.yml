@@ -70,6 +70,10 @@
         state: started
         enabled: true
 
+    - name: Install/verify K3s
+      ansible.builtin.import_role:
+        name: k3s
+
     - name: CI bootstrap (deploy user + authorized_keys)
       ansible.builtin.import_role:
         name: ci_bootstrap
