@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+  namespace: app
+data:
+  MYSQL_DATABASE: "blog"
+  MYSQL_USER: "bloguser"
+  MYSQL_HOST: "mysql"
+  API_PORT: "5050"
+  CLIENT_PORT: "3000"
