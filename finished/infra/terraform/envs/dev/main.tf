@@ -215,9 +215,41 @@ resource "aws_instance" "app" {
   key_name               = aws_key_pair.this.key_name
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   root_block_device {
-  volume_size = 10
-  volume_type = "gp3"
+    volume_size           = 20
+    volume_type           = "gp3"
+    delete_on_termination = true
   }
+
+  user_data = <<-EOF
+  #!/bin/bash
+  set -euo pipefail
+
+  SWAP_GB=2
+  SWAPFILE=/swapfile
+
+  if ! swapon --show | awk '{print $1}' | grep -qx "$${SWAPFILE}"; then
+    if [ ! -f "$${SWAPFILE}" ]; then
+      fallocate -l "$${SWAP_GB}G" "$${SWAPFILE}" || dd if=/dev/zero of="$${SWAPFILE}" bs=1M count=$((SWAP_GB*1024))
+      chmod 600 "$${SWAPFILE}"
+      mkswap "$${SWAPFILE}"
+    fi
+
+    swapon "$${SWAPFILE}"
+
+    if ! grep -qE "^$${SWAPFILE}\\s" /etc/fstab; then
+      echo "$${SWAPFILE} none swap sw 0 0" >> /etc/fstab
+    fi
+  fi
+
+  sysctl -w vm.swappiness=10
+  if ! grep -q "^vm.swappiness" /etc/sysctl.conf; then
+    echo "vm.swappiness=10" >> /etc/sysctl.conf
+  else
+    sed -i 's/^vm\.swappiness=.*/vm.swappiness=10/' /etc/sysctl.conf
+  fi
+EOF
+
+
 
   tags = { Name = "${var.project}-app" }
 }

@@ -6,6 +6,9 @@ kubectl apply -f k8s/app/configmap.yml
 kubectl apply -f k8s/app/secret.yml
 kubectl apply -f k8s/app/mysql-service.yml
 kubectl apply -f k8s/app/mysql-statefulset.yml
+kubectl apply -f k8s/api/service.yaml
+kubectl apply -f k8s/api/deployment.yaml
+
 
 kubectl get ns
 kubectl get all -n app

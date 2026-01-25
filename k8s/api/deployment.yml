@@ -1,0 +1,57 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          # TODO: keep the same image you use in Docker Compose for api.
+          # If you build locally on EC2 and tag it, put that tag here.
+          image: finished-api:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 5050
+
+          # Bring current app env in (existing foundation objects)
+          envFrom:
+            - configMapRef:
+                name: app-config
+            - secretRef:
+                name: app-secrets
+
+          # Minimal, production-realistic health checks
+          readinessProbe:
+            tcpSocket:
+              port: 5050
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 6
+
+          livenessProbe:
+            tcpSocket:
+              port: 5050
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+
+          # Cost-aware resources to reduce host freeze risk
+          resources:
+            requests:
+              cpu: "50m"
+              memory: "128Mi"
+            limits:
+              cpu: "300m"
+              memory: "256Mi"
