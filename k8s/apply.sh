@@ -12,6 +12,13 @@ kubectl apply -f k8s/app/mysql-statefulset.yml
 kubectl apply -f k8s/api/service.yml
 kubectl apply -f k8s/api/deployment.yml
 
+kubectl apply -f k8s/ui/service.yml
+kubectl apply -f k8s/ui/deployment.yml
+
+kubectl apply -f k8s/nginx/configmap.yml
+kubectl apply -f k8s/nginx/service.yml
+kubectl apply -f k8s/nginx/deployment.yml
+
 
 kubectl get ns
 kubectl get all -n app

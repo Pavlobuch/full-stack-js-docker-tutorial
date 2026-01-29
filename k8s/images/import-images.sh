@@ -6,6 +6,8 @@ set -euo pipefail
 
 IMAGES=(
   "finished-api:latest"
+  "finished-ui:latest"
+  "finished-nginx:latest"
 )
 
 for img in "${IMAGES[@]}"; do
