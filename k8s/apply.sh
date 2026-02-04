@@ -5,6 +5,7 @@ set -euo pipefail
 
 
 kubectl apply -f k8s/namespaces/app.yml
+kubectl apply -f k8s/app/limitrange.yml
 kubectl apply -f k8s/app/configmap.yml
 kubectl apply -f k8s/app/secret.yml
 kubectl apply -f k8s/app/mysql-service.yml
@@ -20,6 +21,9 @@ kubectl apply -f k8s/nginx/service.yml
 kubectl apply -f k8s/nginx/deployment.yml
 
 
-kubectl get ns
-kubectl get all -n app
-kubectl get pvc -n app
+echo "==> Status summary"
+kubectl get ns | sed -n '1,8p'
+kubectl -n app get pods -o wide
+kubectl -n app get svc
+kubectl -n app get pvc
+

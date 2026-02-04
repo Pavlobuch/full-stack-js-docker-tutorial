@@ -146,7 +146,6 @@ resource "aws_security_group" "app" {
     protocol        = "tcp"
     security_groups = [aws_security_group.bastion.id]
   }
-
   # For now allow HTTP only from bastion (later we'll switch to ALB SG)
   # ingress {
   #   description     = "HTTP from bastion SG (temporary)"
@@ -166,6 +165,59 @@ resource "aws_security_group" "app" {
 
   tags = { Name = "${var.project}-sg-app" }
 }
+
+resource "aws_security_group_rule" "app_ingress_k8s_nodeport_from_alb" {
+  type                     = "ingress"
+  security_group_id        = aws_security_group.app.id
+  from_port                = 30080
+  to_port                  = 30080
+  protocol                 = "tcp"
+  source_security_group_id = aws_security_group.alb.id
+  description              = "Allow ALB to reach k8s nginx NodePort (30080)"
+}
+
+resource "aws_lb_target_group" "k8s" {
+  name        = "${var.project}-tg-k8s"
+  port        = 30080
+  protocol    = "HTTP"
+  vpc_id      = aws_vpc.this.id
+  target_type = "instance"
+
+  health_check {
+    enabled             = true
+    protocol            = "HTTP"
+    port                = "traffic-port"
+    path                = "/"
+    matcher             = "200-399"
+    interval            = 15
+    timeout             = 5
+    healthy_threshold   = 2
+    unhealthy_threshold = 2
+  }
+}
+
+resource "aws_lb_target_group_attachment" "k8s" {
+  target_group_arn = aws_lb_target_group.k8s.arn
+  target_id        = aws_instance.app.id
+  port             = 30080
+}
+
+resource "aws_lb_listener_rule" "k8s_path" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 10
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.k8s.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/k8s/*"]
+    }
+  }
+}
+
 
 # Minimal IAM for SSM (useful later even if we deploy via SSH)
 data "aws_iam_policy_document" "ec2_assume" {
@@ -215,7 +267,7 @@ resource "aws_instance" "app" {
   key_name               = aws_key_pair.this.key_name
   iam_instance_profile   = aws_iam_instance_profile.ec2_profile.name
   root_block_device {
-    volume_size           = 20
+    volume_size           = 32
     volume_type           = "gp3"
     delete_on_termination = true
   }

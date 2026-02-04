@@ -12,7 +12,7 @@ IMAGES=(
 
 for img in "${IMAGES[@]}"; do
   echo "==> Importing image into k3s containerd: ${img}"
-  tmp="/tmp/${img//[:\/]/_}.tar"
+  tmp="/var/tmp/${img//[:\/]/_}.tar"
 
   if ! docker image inspect "${img}" >/dev/null 2>&1; then
     echo "ERROR: Docker image not found locally: ${img}"
@@ -22,6 +22,7 @@ for img in "${IMAGES[@]}"; do
 
   docker save "${img}" -o "${tmp}"
   sudo k3s ctr images import "${tmp}"
+  rm -f "${tmp}"
 done
 
 echo "==> Images in k3s containerd:"
