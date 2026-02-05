@@ -182,6 +182,12 @@
         path: /usr/local/lib/docker/cli-plugins/docker-buildx
         state: absent
 
+    - name: Install nano editor
+      ansible.builtin.dnf:
+        name: nano
+        state: present
+        become: true
+
     - name: Install wget
       ansible.builtin.package:
         name: wget
