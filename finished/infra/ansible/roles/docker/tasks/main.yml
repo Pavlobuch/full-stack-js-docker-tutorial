@@ -1,0 +1,160 @@
+    - name: Ensure docker CLI plugins dir exists
+      ansible.builtin.file:
+        path: "{{ docker_cli_plugins_dir }}"
+        state: directory
+        mode: "0755"
+
+        # ---- Install Docker Compose plugin (no wget/curl required) ----
+    - name: Download Docker Compose plugin (official binary)
+      ansible.builtin.get_url:
+        url: "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64"
+        dest: "{{ docker_compose_plugin_path }}"
+        mode: "0755"
+
+    - name: Verify docker compose works
+      ansible.builtin.command: docker compose version
+      register: compose_ver
+      changed_when: false
+
+    - name: Print docker compose version
+      ansible.builtin.debug:
+        var: compose_ver.stdout
+
+        # ---- Ensure compose file exists ----
+    - name: Check docker-compose.yml exists
+      ansible.builtin.stat:
+        path: "{{ compose_file }}"
+      register: compose_stat
+
+    - name: Fail if docker-compose.yml missing
+      ansible.builtin.fail:
+        msg: "docker-compose.yml not found at {{ compose_file }}"
+      when: not compose_stat.stat.exists
+
+        # ---- Install Buildx via GitHub API (correct asset URL) ----
+    - name: Ensure docker cli plugins dirs exist (both common locations)
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - /usr/local/lib/docker/cli-plugins
+        - /usr/libexec/docker/cli-plugins
+
+    - name: Get latest buildx release info from GitHub API
+      ansible.builtin.uri:
+        url: "https://api.github.com/repos/docker/buildx/releases/latest"
+        return_content: true
+      register: buildx_release
+
+    - name: Pick linux-amd64 buildx asset URL
+      ansible.builtin.set_fact:
+        buildx_url: >-
+          {{
+            (buildx_release.json.assets
+              | selectattr('name', 'search', 'linux-amd64$')
+              | map(attribute='browser_download_url')
+              | list
+              | first)
+          }}
+
+    - name: Fail if buildx_url not found
+      ansible.builtin.fail:
+        msg: "Could not find linux-amd64 buildx asset in latest release"
+      when: buildx_url is not defined or buildx_url | length == 0
+
+    - name: Remove old buildx plugin if exists (avoid empty file)
+      ansible.builtin.file:
+        path: /usr/local/lib/docker/cli-plugins/docker-buildx
+        state: absent
+
+    - name: Download buildx with wget (show errors)
+      ansible.builtin.command: >
+        wget -S -O /usr/local/lib/docker/cli-plugins/docker-buildx "{{ buildx_url }}"
+      register: wget_buildx
+
+    - name: Make buildx executable
+      ansible.builtin.file:
+        path: /usr/local/lib/docker/cli-plugins/docker-buildx
+        mode: "0755"
+
+    - name: Check buildx file size
+      ansible.builtin.stat:
+        path: /usr/local/lib/docker/cli-plugins/docker-buildx
+      register: buildx_stat
+
+    - name: Fail if buildx file is empty
+      ansible.builtin.fail:
+        msg: "Downloaded buildx is empty (0 bytes). URL={{ buildx_url }}"
+      when: buildx_stat.stat.size | int == 0
+
+    - name: Copy Buildx plugin to /usr/libexec (alternate plugin path)
+      ansible.builtin.copy:
+        src: /usr/local/lib/docker/cli-plugins/docker-buildx
+        dest: /usr/libexec/docker/cli-plugins/docker-buildx
+        remote_src: true
+        mode: "0755"
+
+    - name: Restart docker to pick up CLI plugins (safe)
+      ansible.builtin.service:
+        name: docker
+        state: restarted
+
+    - name: Verify buildx
+      ansible.builtin.command: docker buildx version
+      register: buildx_ver
+      changed_when: false
+
+    - name: Print buildx version
+      ansible.builtin.debug:
+        var: buildx_ver.stdout
+
+    - name: Check if .env exists
+      ansible.builtin.stat:
+        path: "{{ env_file_path }}"
+      register: env_stat
+
+
+    # ---- Write .env and bring stack up ----
+    - name: Write .env file (only if missing)
+      ansible.builtin.copy:
+        dest: "{{ env_file_path }}"
+        content: "{{ env_file_content }}"
+        owner: ec2-user
+        group: ec2-user
+        mode: "0600"
+        force: false
+      when: not env_stat.stat.exists
+
+
+    - name: Docker compose up (build on EC2)
+      ansible.builtin.command: docker compose up -d --build
+      args:
+        chdir: "{{ compose_dir }}"
+      register: compose_up
+      changed_when: false
+      failed_when: compose_up.rc != 0
+
+    - name: Print docker compose stderr (if any)
+      ansible.builtin.debug:
+        var: compose_up.stderr_lines
+
+    - name: Docker compose ps
+      ansible.builtin.command: docker compose ps
+      args:
+        chdir: "{{ compose_dir }}"
+      register: compose_ps
+      changed_when: false
+
+    - name: Print docker compose ps
+      ansible.builtin.debug:
+        var: compose_ps.stdout_lines
+
+    - name: Show running containers
+      ansible.builtin.command: docker ps
+      register: docker_ps
+      changed_when: false
+
+    - name: Print docker ps
+      ansible.builtin.debug:
+        var: docker_ps.stdout_lines

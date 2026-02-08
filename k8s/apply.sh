@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-./k8s/images/import-images.sh
+# ./k8s/images/import-images.sh
 
 
 kubectl apply -f k8s/namespaces/app.yml

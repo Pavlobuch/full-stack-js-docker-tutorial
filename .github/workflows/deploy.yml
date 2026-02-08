@@ -77,8 +77,23 @@ jobs:
               "git fetch --prune origin",
               "git reset --hard origin/main",
               "cd \"$APP_DIR/finished\"",
-              "docker compose up -d --build",
-              "docker compose ps"
+              "docker build -t finished-api:latest ./api-server",
+              "docker build -t finished-ui:latest ./blog-ui",
+              "docker build -t finished-nginx:latest ./nginx",
+
+              "docker save finished-api:latest -o /var/tmp/finished-api.tar",
+              "sudo k3s ctr images import /var/tmp/finished-api.tar",
+
+              "docker save finished-ui:latest -o /var/tmp/finished-ui.tar",
+              "sudo k3s ctr images import /var/tmp/finished-ui.tar",
+
+              "docker save finished-nginx:latest -o /var/tmp/finished-nginx.tar",
+              "sudo k3s ctr images import /var/tmp/finished-nginx.tar",
+
+              "./k8s/apply.sh",
+              "kubectl -n app rollout status deploy/nginx",
+              "kubectl -n app rollout status deploy/api",
+              "kubectl -n app rollout status deploy/ui"
             ]
           }')"
 

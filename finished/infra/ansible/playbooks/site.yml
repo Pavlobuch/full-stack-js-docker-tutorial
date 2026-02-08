@@ -112,175 +112,108 @@
         force: true
       become: false
 
-    - name: Ensure docker CLI plugins dir exists
-      ansible.builtin.file:
-        path: "{{ docker_cli_plugins_dir }}"
-        state: directory
-        mode: "0755"
-
-    # ---- Install Docker Compose plugin (no wget/curl required) ----
-    - name: Download Docker Compose plugin (official binary)
-      ansible.builtin.get_url:
-        url: "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64"
-        dest: "{{ docker_compose_plugin_path }}"
-        mode: "0755"
-
-    - name: Verify docker compose works
-      ansible.builtin.command: docker compose version
-      register: compose_ver
-      changed_when: false
-
-    - name: Print docker compose version
-      ansible.builtin.debug:
-        var: compose_ver.stdout
-
-    # ---- Ensure compose file exists ----
-    - name: Check docker-compose.yml exists
-      ansible.builtin.stat:
-        path: "{{ compose_file }}"
-      register: compose_stat
-
-    - name: Fail if docker-compose.yml missing
-      ansible.builtin.fail:
-        msg: "docker-compose.yml not found at {{ compose_file }}"
-      when: not compose_stat.stat.exists
-
-    # ---- Install Buildx via GitHub API (correct asset URL) ----
-    - name: Ensure docker cli plugins dirs exist (both common locations)
-      ansible.builtin.file:
-        path: "{{ item }}"
-        state: directory
-        mode: "0755"
-      loop:
-        - /usr/local/lib/docker/cli-plugins
-        - /usr/libexec/docker/cli-plugins
-
-    - name: Get latest buildx release info from GitHub API
-      ansible.builtin.uri:
-        url: "https://api.github.com/repos/docker/buildx/releases/latest"
-        return_content: true
-      register: buildx_release
-
-    - name: Pick linux-amd64 buildx asset URL
-      ansible.builtin.set_fact:
-        buildx_url: >-
-          {{
-            (buildx_release.json.assets
-              | selectattr('name', 'search', 'linux-amd64$')
-              | map(attribute='browser_download_url')
-              | list
-              | first)
-          }}
-
-    - name: Fail if buildx_url not found
-      ansible.builtin.fail:
-        msg: "Could not find linux-amd64 buildx asset in latest release"
-      when: buildx_url is not defined or buildx_url | length == 0
-
-    - name: Remove old buildx plugin if exists (avoid empty file)
-      ansible.builtin.file:
-        path: /usr/local/lib/docker/cli-plugins/docker-buildx
-        state: absent
-
     - name: Install nano editor
+      become: true
       ansible.builtin.dnf:
         name: nano
         state: present
-        become: true
+
 
     - name: Install wget
       ansible.builtin.package:
         name: wget
         state: present
 
-    - name: Download buildx with wget (show errors)
-      ansible.builtin.command: >
-        wget -S -O /usr/local/lib/docker/cli-plugins/docker-buildx "{{ buildx_url }}"
-      register: wget_buildx
-
-    - name: Make buildx executable
-      ansible.builtin.file:
-        path: /usr/local/lib/docker/cli-plugins/docker-buildx
-        mode: "0755"
-
-    - name: Check buildx file size
-      ansible.builtin.stat:
-        path: /usr/local/lib/docker/cli-plugins/docker-buildx
-      register: buildx_stat
-
-    - name: Fail if buildx file is empty
-      ansible.builtin.fail:
-        msg: "Downloaded buildx is empty (0 bytes). URL={{ buildx_url }}"
-      when: buildx_stat.stat.size | int == 0
-
-
-    - name: Copy Buildx plugin to /usr/libexec (alternate plugin path)
-      ansible.builtin.copy:
-        src: /usr/local/lib/docker/cli-plugins/docker-buildx
-        dest: /usr/libexec/docker/cli-plugins/docker-buildx
-        remote_src: true
-        mode: "0755"
-
-    - name: Restart docker to pick up CLI plugins (safe)
-      ansible.builtin.service:
-        name: docker
-        state: restarted
-
-    - name: Verify buildx
-      ansible.builtin.command: docker buildx version
-      register: buildx_ver
-      changed_when: false
-
-    - name: Print buildx version
-      ansible.builtin.debug:
-        var: buildx_ver.stdout
-
-    - name: Check if .env exists
-      ansible.builtin.stat:
-        path: "{{ env_file_path }}"
-      register: env_stat
-
-
-    # ---- Write .env and bring stack up ----
-    - name: Write .env file (only if missing)
-      ansible.builtin.copy:
-        dest: "{{ env_file_path }}"
-        content: "{{ env_file_content }}"
-        owner: ec2-user
-        group: ec2-user
-        mode: "0600"
-        force: false
-      when: not env_stat.stat.exists
-
-
-    - name: Docker compose up (build on EC2)
-      ansible.builtin.command: docker compose up -d --build
+    # ---- Build images on EC2 (Docker) ----
+    - name: Build finished-api image
+      ansible.builtin.command: docker build -t finished-api:latest ./api-server
       args:
-        chdir: "{{ compose_dir }}"
-      register: compose_up
+        chdir: "{{ repo_dest }}/finished"
+      register: build_api
       changed_when: false
-      failed_when: compose_up.rc != 0
 
-    - name: Print docker compose stderr (if any)
-      ansible.builtin.debug:
-        var: compose_up.stderr_lines
-
-    - name: Docker compose ps
-      ansible.builtin.command: docker compose ps
+    - name: Build finished-ui image
+      ansible.builtin.command: docker build -t finished-ui:latest ./blog-ui
       args:
-        chdir: "{{ compose_dir }}"
-      register: compose_ps
+        chdir: "{{ repo_dest }}/finished"
+      register: build_ui
       changed_when: false
 
-    - name: Print docker compose ps
-      ansible.builtin.debug:
-        var: compose_ps.stdout_lines
+    - name: Build finished-nginx image
+      ansible.builtin.command: docker build -t finished-nginx:latest ./nginx
+      args:
+        chdir: "{{ repo_dest }}/finished"
+      register: build_nginx
+      changed_when: false
 
-    - name: Show running containers
-      ansible.builtin.command: docker ps
+    # ---- Save -> Import into k3s containerd ----
+    - name: Save finished-api image tar
+      ansible.builtin.command: docker save finished-api:latest -o /var/tmp/finished-api.tar
+      changed_when: false
+
+    - name: Import finished-api into k3s containerd
+      ansible.builtin.command: k3s ctr images import /var/tmp/finished-api.tar
+      changed_when: false
+
+    - name: Save finished-ui image tar
+      ansible.builtin.command: docker save finished-ui:latest -o /var/tmp/finished-ui.tar
+      changed_when: false
+
+    - name: Import finished-ui into k3s containerd
+      ansible.builtin.command: k3s ctr images import /var/tmp/finished-ui.tar
+      changed_when: false
+
+    - name: Save finished-nginx image tar
+      ansible.builtin.command: docker save finished-nginx:latest -o /var/tmp/finished-nginx.tar
+      changed_when: false
+
+    - name: Import finished-nginx into k3s containerd
+      ansible.builtin.command: k3s ctr images import /var/tmp/finished-nginx.tar
+      changed_when: false
+
+    # ---- Apply k8s manifests (make apply.sh CWD-independent!) ----
+    - name: Run k8s apply
+      ansible.builtin.command: ./k8s/apply.sh
+      args:
+        chdir: "{{ repo_dest }}"
+      register: k8s_apply
+      changed_when: false
+
+    # ---- Force restart because tag is :latest (otherwise pods may not pick new digest) ----
+    - name: Rollout restart deployments (latest tag)
+      ansible.builtin.command: kubectl -n app rollout restart deploy/nginx deploy/api deploy/ui
+      changed_when: false
+
+    # ---- Wait for rollouts ----
+    - name: Wait for nginx rollout
+      ansible.builtin.command: kubectl -n app rollout status deploy/nginx --timeout=180s
+      changed_when: false
+
+    - name: Wait for api rollout
+      ansible.builtin.command: kubectl -n app rollout status deploy/api --timeout=180s
+      changed_when: false
+
+    - name: Wait for ui rollout
+      ansible.builtin.command: kubectl -n app rollout status deploy/ui --timeout=180s
+      changed_when: false
+
+    # ---- Show running containers + k8s statuses ----
+    - name: Show Docker containers (build-time runtime)
+      ansible.builtin.command: docker ps --format "table {{'{{'}}.Names{{'}}'}}\t{{'{{'}}.Image{{'}}'}}\t{{'{{'}}.Status{{'}}'}}\t{{'{{'}}.Ports{{'}}'}}"
       register: docker_ps
       changed_when: false
 
     - name: Print docker ps
       ansible.builtin.debug:
         var: docker_ps.stdout_lines
+
+    - name: Show k8s pods/services
+      ansible.builtin.command: kubectl -n app get pods,svc -o wide
+      register: k8s_status
+      changed_when: false
+
+    - name: Print k8s status
+      ansible.builtin.debug:
+        var: k8s_status.stdout_lines
+
+
