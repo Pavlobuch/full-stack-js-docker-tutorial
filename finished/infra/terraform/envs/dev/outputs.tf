@@ -10,7 +10,7 @@ output "alb_arn" {
 }
 
 output "tg_arn" {
-  value = aws_lb_target_group.app_nginx.arn
+  value = aws_lb_target_group.k8s.arn
 }
 
 output "alb_sg_id" {

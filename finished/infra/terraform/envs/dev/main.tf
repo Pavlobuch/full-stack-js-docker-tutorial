@@ -174,6 +174,9 @@ resource "aws_security_group_rule" "app_ingress_k8s_nodeport_from_alb" {
   protocol                 = "tcp"
   source_security_group_id = aws_security_group.alb.id
   description              = "Allow ALB to reach k8s nginx NodePort (30080)"
+  lifecycle {
+    create_before_destroy = true
+    }
 }
 
 resource "aws_lb_target_group" "k8s" {
@@ -187,7 +190,7 @@ resource "aws_lb_target_group" "k8s" {
     enabled             = true
     protocol            = "HTTP"
     port                = "traffic-port"
-    path                = "/"
+    path                = "/k8s/"
     matcher             = "200-399"
     interval            = 15
     timeout             = 5
@@ -218,6 +221,37 @@ resource "aws_lb_listener_rule" "k8s_path" {
   }
 }
 
+resource "aws_lb_listener_rule" "api_to_k8s" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 11
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.k8s.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/api/*"]
+    }
+  }
+}
+
+resource "aws_lb_listener_rule" "ui_to_k8s" {
+  listener_arn = aws_lb_listener.http.arn
+  priority     = 12
+
+  action {
+    type             = "forward"
+    target_group_arn = aws_lb_target_group.k8s.arn
+  }
+
+  condition {
+    path_pattern {
+      values = ["/*"]
+    }
+  }
+}
 
 # Minimal IAM for SSM (useful later even if we deploy via SSH)
 data "aws_iam_policy_document" "ec2_assume" {

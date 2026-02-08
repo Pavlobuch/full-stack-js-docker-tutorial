@@ -40,6 +40,9 @@ resource "aws_security_group_rule" "app_from_alb_80" {
   protocol                 = "tcp"
   source_security_group_id = aws_security_group.alb.id
   description              = "Allow ALB to reach nginx on app (80)"
+  lifecycle {
+    create_before_destroy = true
+    }
 }
 
 ############################
@@ -63,32 +66,32 @@ resource "aws_lb" "this" {
 ############################
 # Target Group → nginx host:80
 ############################
-resource "aws_lb_target_group" "app_nginx" {
-  name_prefix = "cftg-"
-  port        = 80
-  protocol    = "HTTP"
-  vpc_id      = aws_vpc.this.id
-  target_type = "instance"
+# resource "aws_lb_target_group" "app_nginx" {
+#   name_prefix = "cftg-"
+#   port        = 80
+#   protocol    = "HTTP"
+#   vpc_id      = aws_vpc.this.id
+#   target_type = "instance"
 
-  health_check {
-    path                = "/"
-    port                = "traffic-port"
-    protocol            = "HTTP"
-    matcher             = "200-399"
-    healthy_threshold   = 2
-    unhealthy_threshold = 2
-    interval            = 15
-    timeout             = 5
-  }
+#   health_check {
+#     path                = "/"
+#     port                = "traffic-port"
+#     protocol            = "HTTP"
+#     matcher             = "200-399"
+#     healthy_threshold   = 2
+#     unhealthy_threshold = 2
+#     interval            = 15
+#     timeout             = 5
+#   }
 
-  lifecycle {
-    create_before_destroy = true
-  }
+#   lifecycle {
+#     create_before_destroy = true
+#   }
 
-  tags = {
-    Name = "cheap-fullstack-tg"
-  }
-}
+#   tags = {
+#     Name = "cheap-fullstack-tg"
+#   }
+# }
 
 ############################
 # Listener :80 → Target Group
@@ -100,18 +103,18 @@ resource "aws_lb_listener" "http" {
 
   default_action {
     type             = "forward"
-    target_group_arn = aws_lb_target_group.app_nginx.arn
+    target_group_arn = aws_lb_target_group.k8s.arn
   }
 }
 
 ############################
 # Attach Instance → Target Group (port 80)
 ############################
-resource "aws_lb_target_group_attachment" "app_instance" {
-  target_group_arn = aws_lb_target_group.app_nginx.arn
-  target_id        = aws_instance.app.id
-  port             = 80
-}
+# resource "aws_lb_target_group_attachment" "app_instance" {
+#   target_group_arn = aws_lb_target_group.app_nginx.arn
+#   target_id        = aws_instance.app.id
+#   port             = 80
+# }
 
 ############################
 # Output
