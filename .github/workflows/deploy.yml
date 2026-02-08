@@ -90,6 +90,7 @@ jobs:
               "docker save finished-nginx:latest -o /var/tmp/finished-nginx.tar",
               "sudo k3s ctr images import /var/tmp/finished-nginx.tar",
 
+              "cd \"$APP_DIR\"",
               "./k8s/apply.sh",
               "kubectl -n app rollout status deploy/nginx",
               "kubectl -n app rollout status deploy/api",
